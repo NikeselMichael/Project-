@@ -1,0 +1,158 @@
+#include <Arduino.h>
+#include <MecanumCar_v2.h>
+#include <IRremote.h>
+
+// IR Hex Codes
+#define BTN_1     0xFF6897
+#define BTN_2     0xFF9867
+#define BTN_3     0xFFB04F
+#define BTN_4     0xFF30CF
+#define BTN_5     0xFF18E7
+#define BTN_6     0xFF7A85
+#define BTN_9     0xFF5AA5 // NEW: Trigger for full sequence
+#define BTN_UP    0xFF629D
+#define BTN_DOWN  0xFFA857
+#define BTN_LEFT  0xFF22DD
+#define BTN_RIGHT 0xFFC23D
+#define BTN_0     0xFF4AB5
+#define BTN_OK    0xFF02FD // Headlights
+
+// Hardware Pins
+#define IR_PIN A3
+
+// Configuration
+#define SPEED 80        // Global PWM speed for set movements
+#define STEP_DELAY 1500 // Time (ms) to perform each movement in the sequence
+
+mecanumCar car(3, 2);
+IRrecv irrecv(IR_PIN);
+decode_results results;
+
+// FSM States
+enum RobotState { 
+  IDLE, 
+  MOVE_1, MOVE_2, MOVE_3, MOVE_4, MOVE_5, MOVE_6,
+  AUTO_SEQUENCE, // State for running 1 to 6
+  MANUAL_FWD, MANUAL_BWD, MANUAL_LEFT, MANUAL_RIGHT 
+};
+
+RobotState currentState = IDLE;
+RobotState lastState = IDLE; 
+
+bool lightsOn = false;
+
+// Helper functions for clean code execution
+void executeMove1() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Upper_R(1, SPEED);
+  car.Motor_Lower_L(1, SPEED); car.Motor_Lower_R(1, SPEED);
+}
+void executeMove2() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Upper_R(0, SPEED); 
+  car.Motor_Lower_L(0, SPEED); car.Motor_Lower_R(1, SPEED);
+}
+void executeMove3() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Lower_R(1, SPEED);
+  car.Motor_Upper_R(0, 0);     car.Motor_Lower_L(0, 0); 
+}
+void executeMove4() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Lower_L(1, SPEED);
+  car.Motor_Upper_R(0, 0);     car.Motor_Lower_R(0, 0); 
+}
+void executeMove5() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Lower_L(1, SPEED);
+  car.Motor_Upper_R(0, SPEED); car.Motor_Lower_R(0, SPEED);
+}
+void executeMove6() {
+  car.Motor_Upper_L(1, SPEED); car.Motor_Upper_R(0, SPEED);
+  car.Motor_Lower_L(0, 0);     car.Motor_Lower_R(0, 0); 
+}
+
+void setup() {
+  Serial.begin(9600);
+  car.Init();
+  irrecv.enableIRIn();
+}
+
+void loop() {
+  // 1. Digital Perception Block
+  if (irrecv.decode(&results)) {
+    unsigned long code = results.value;
+    
+    if (code == BTN_OK) {
+      lightsOn = !lightsOn;
+      car.right_led(lightsOn);
+      car.left_led(lightsOn);
+      delay(300);
+    }
+    // Update the state based on the button press
+    else if (code == BTN_0) { currentState = IDLE; delay(300); }
+    else if (code == BTN_UP) { currentState = MANUAL_FWD; delay(300); }
+    else if (code == BTN_DOWN) { currentState = MANUAL_BWD; delay(300); }
+    else if (code == BTN_LEFT) { currentState = MANUAL_LEFT; delay(300); }
+    else if (code == BTN_RIGHT) { currentState = MANUAL_RIGHT; delay(300); }
+    
+    // Custom Movement Buttons
+    else if (code == BTN_1) { currentState = MOVE_1; delay(300); }
+    else if (code == BTN_2) { currentState = MOVE_2; delay(300); }
+    else if (code == BTN_3) { currentState = MOVE_3; delay(300); }
+    else if (code == BTN_4) { currentState = MOVE_4; delay(300); }
+    else if (code == BTN_5) { currentState = MOVE_5; delay(300); }
+    else if (code == BTN_6) { currentState = MOVE_6; delay(300); }
+    
+    // Button 9 maps to the full sequence
+    else if (code == BTN_9) { currentState = AUTO_SEQUENCE; delay(300); }
+    
+    irrecv.resume();
+  }
+
+  // 2. Logic Execution (ONLY RUNS ONCE PER STATE CHANGE)
+  if (currentState != lastState) {
+    
+    switch(currentState) {
+      case IDLE:
+        car.Stop();
+        break;
+        
+      case MANUAL_FWD:
+        car.Motor_Upper_L(1, SPEED); car.Motor_Upper_R(1, SPEED);
+        car.Motor_Lower_L(1, SPEED); car.Motor_Lower_R(1, SPEED);
+        break;
+        
+      case MANUAL_BWD:
+        car.Back();
+        break;
+        
+      case MANUAL_LEFT:
+        car.L_Move();
+        break;
+        
+      case MANUAL_RIGHT:
+        car.R_Move();
+        break;
+
+      case MOVE_1: executeMove1(); break;
+      case MOVE_2: executeMove2(); break;
+      case MOVE_3: executeMove3(); break;
+      case MOVE_4: executeMove4(); break;
+      case MOVE_5: executeMove5(); break;
+      case MOVE_6: executeMove6(); break;
+
+      // Executed when Button 9 is pressed
+      case AUTO_SEQUENCE:
+        executeMove1(); delay(STEP_DELAY);
+        executeMove2(); delay(STEP_DELAY);
+        executeMove3(); delay(STEP_DELAY);
+        executeMove4(); delay(STEP_DELAY);
+        executeMove5(); delay(STEP_DELAY);
+        executeMove6(); delay(STEP_DELAY);
+        
+        // Finalize sequence: return to IDLE and stop wheels
+        currentState = IDLE;
+        car.Stop();
+        break;
+    }
+    
+    // Sync states to prevent looping block logic repeatedly
+    lastState = currentState; 
+  }
+}
